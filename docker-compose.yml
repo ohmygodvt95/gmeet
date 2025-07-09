@@ -1,0 +1,108 @@
+version: '3.8'
+
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: gmeeting_mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_PASSWORD}
+      MYSQL_DATABASE: ${DB_NAME}
+      MYSQL_USER: ${DB_USER}
+      MYSQL_PASSWORD: ${DB_PASSWORD}
+    ports:
+      - "${DB_PORT}:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./docker/mysql/init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - gmeeting_network
+
+  redis:
+    image: redis:7-alpine
+    container_name: gmeeting_redis
+    restart: unless-stopped
+    command: redis-server --requirepass ${REDIS_PASSWORD}
+    ports:
+      - "${REDIS_PORT}:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - gmeeting_network
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: gmeeting_backend
+    restart: unless-stopped
+    environment:
+      - DB_HOST=mysql
+      - DB_PORT=3306
+      - DB_USER=${DB_USER}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - DB_NAME=${DB_NAME}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+      - JWT_SECRET=${JWT_SECRET}
+      - JWT_EXPIRES_IN=${JWT_EXPIRES_IN}
+      - BACKEND_PORT=${BACKEND_PORT}
+      - FRONTEND_URL=${FRONTEND_URL}
+    ports:
+      - "${BACKEND_PORT}:3001"
+    depends_on:
+      - mysql
+      - redis
+    networks:
+      - gmeeting_network
+
+  sfu-server:
+    build:
+      context: ./sfu-server
+      dockerfile: Dockerfile
+    container_name: gmeeting_sfu
+    restart: unless-stopped
+    environment:
+      - SFU_PORT=${SFU_PORT}
+      - BACKEND_URL=${BACKEND_URL}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+      - JWT_SECRET=${JWT_SECRET}
+      - MEDIASOUP_WORKERS=${MEDIASOUP_WORKERS}
+      - ANNOUNCED_IP=${ANNOUNCED_IP}
+    ports:
+      - "${SFU_PORT}:3002"
+      - "10000-10100:10000-10100/udp"  # MediaSoup RTC ports
+    depends_on:
+      - redis
+    networks:
+      - gmeeting_network
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: gmeeting_frontend
+    restart: unless-stopped
+    environment:
+      - NUXT_PUBLIC_API_BASE=${BACKEND_URL}
+      - NUXT_PUBLIC_SOCKET_URL=${BACKEND_URL}
+      - NUXT_PUBLIC_SFU_URL=http://localhost:${SFU_PORT}
+      - NUXT_HOST=0.0.0.0
+      - NUXT_PORT=3000
+    ports:
+      - "${FRONTEND_PORT}:3000"
+    depends_on:
+      - backend
+    networks:
+      - gmeeting_network
+
+volumes:
+  mysql_data:
+  redis_data:
+
+networks:
+  gmeeting_network:
+    driver: bridge
